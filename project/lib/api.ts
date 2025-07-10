@@ -239,7 +239,7 @@ export async function getTransactions<T extends keyof TransactionActionMap>({
   const cached = apiCache.get<TransactionActionMap[T][]>(cacheKey)
   if (cached !== null) return cached
 
-  const res = await client.get<{ result: TransactionActionMap[T][] }>('/api', {
+  const res = await client.get<{ result: TransactionActionMap[T][] | string }>('/api', {
     params: {
       module: 'account',
       action,
@@ -250,13 +250,21 @@ export async function getTransactions<T extends keyof TransactionActionMap>({
     },
   })
   
-  if (typeof res.data.result === 'string' && (res.data.result as string)?.includes('rate limit reached')) {
-    console.log(res.config.params.action, res.config.params.apikey)
-    throw new Error('Max daily rate limit reached. 110000 (100%) of 100000 day/limit')
+  // 检查是否是错误消息
+  if (typeof res.data.result === 'string') {
+    if (res.data.result.includes('rate limit reached')) {
+      console.log(res.config.params.action, res.config.params.apikey)
+      throw new Error('Max daily rate limit reached. 110000 (100%) of 100000 day/limit')
+    }
+    console.log('API error:', res.data.result)
+    // 返回空数组而不是错误字符串
+    return []
   }
   
-  apiCache.set(cacheKey, res.data.result, 30000) // 缓存30秒
-  return res.data.result
+  // 确保返回的是数组
+  const result = Array.isArray(res.data.result) ? res.data.result : []
+  apiCache.set(cacheKey, result, 30000) // 缓存30秒
+  return result
 }
 
 // 批量获取交易数据

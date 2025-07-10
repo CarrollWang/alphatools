@@ -7,16 +7,17 @@ import { getTransactions } from '@/lib/api'
 import { getSwapInfo, isAddressEqual, isValidSourceToken, retry } from '@/lib/utils'
 
 export async function GET(request: Request) {
-  const { searchParams } = new URL(request.url)
-  const address = searchParams.get('address') as Hex
-  const startblock = Number(searchParams.get('startblock') || '0')
-  const endblock = Number(searchParams.get('endblock') || '99999999')
+  try {
+    const { searchParams } = new URL(request.url)
+    const address = searchParams.get('address') as Hex
+    const startblock = Number(searchParams.get('startblock') || '0')
+    const endblock = Number(searchParams.get('endblock') || '99999999')
 
-  if (!address) {
-    return NextResponse.json({ error: 'Address is required' }, { status: 400 })
-  }
+    if (!address) {
+      return NextResponse.json({ error: 'Address is required' }, { status: 400 })
+    }
 
-  let [rawNormalTransactions = [], rawInternalTransactions = [], rawTokenTransactions = []] = await Promise.all([
+  let [rawNormalTransactions, rawInternalTransactions, rawTokenTransactions] = await Promise.all([
     retry(
       getTransactions,
       3,
@@ -46,6 +47,11 @@ export async function GET(request: Request) {
     }),
   ])
 
+  // 确保数据是数组格式
+  rawNormalTransactions = Array.isArray(rawNormalTransactions) ? rawNormalTransactions : []
+  rawInternalTransactions = Array.isArray(rawInternalTransactions) ? rawInternalTransactions : []
+  rawTokenTransactions = Array.isArray(rawTokenTransactions) ? rawTokenTransactions : []
+
   if (!rawNormalTransactions?.length && !rawTokenTransactions?.length) {
     console.log('No transactions found for address:', address)
     return NextResponse.json([])
@@ -62,22 +68,24 @@ export async function GET(request: Request) {
     && rawTokenTransactions?.some(tx => isAlphaTokenTx(tx.contractAddress))
   ) {
     console.log('No normal transactions found, retrying with txlist...')
-    rawNormalTransactions = await getTransactions({
+    const newNormalTx = await getTransactions({
       action: 'txlist',
       address,
       startblock,
       endblock,
     })
+    rawNormalTransactions = Array.isArray(newNormalTx) ? newNormalTx : []
   }
 
   while (rawNormalTransactions?.some(tx => isBinanceDexTx(tx.from, tx.to)) && !rawTokenTransactions?.length) {
     console.log('No token transactions found, retrying with tokentx...')
-    rawTokenTransactions = await getTransactions({
+    const newTokenTx = await getTransactions({
       action: 'tokentx',
       address,
       startblock,
       endblock,
     })
+    rawTokenTransactions = Array.isArray(newTokenTx) ? newTokenTx : []
   }
 
   const normalTransactions = rawNormalTransactions.filter(tx => isBinanceDexTx(tx.from, tx.to))
@@ -184,5 +192,12 @@ export async function GET(request: Request) {
     )
     .sort((a, b) => b.timestamp - a.timestamp)
 
-  return NextResponse.json(resolvedTransactions)
+    return NextResponse.json(resolvedTransactions)
+  } catch (error) {
+    console.error('Error in transactions API:', error)
+    return NextResponse.json(
+      { error: 'Failed to fetch transaction data' },
+      { status: 500 }
+    )
+  }
 }
